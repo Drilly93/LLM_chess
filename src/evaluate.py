@@ -555,11 +555,11 @@ def load_model_from_hub(model_id: str, device: str = "auto"):
     
     # Import to register custom classes
     from src.model import ChessConfig, ChessForCausalLM
-    from src.tokenizer import ChessTokenizer    
+    #from src.tokenizer import ChessTokenizer    
     
 
-    # tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    tokenizer = ChessTokenizer.from_pretrained(model_id) # Modif 
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    #tokenizer = ChessTokenizer.from_pretrained(model_id) # Modif 
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         trust_remote_code=True,
