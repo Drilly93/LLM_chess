@@ -129,6 +129,27 @@ Chess model submitted to the LLM Course Chess Challenge.
             commit_message=f"Chess Challenge submission by {username}",
         )
 
+    import shutil
+    import json
+    tokenizer.save_pretrained(tmp_path)
+
+    tok_cfg_path = tmp_path / "tokenizer_config.json"
+    tok_cfg = json.loads(tok_cfg_path.read_text()) if tok_cfg_path.exists() else {}
+
+    tok_cfg["tokenizer_class"] = "ChessTokenizer"
+    tok_cfg["auto_map"] = {
+        "AutoTokenizer": "src.tokenizer.ChessTokenizer"
+    }
+
+    tok_cfg_path.write_text(json.dumps(tok_cfg, indent=2))
+
+    # --- Add source code so the Hub can import custom classes (trust_remote_code) ---
+    (tmp_path / "src").mkdir(exist_ok=True)
+
+    shutil.copyfile("src/tokenizer.py", tmp_path / "src" / "tokenizer.py")
+    shutil.copyfile("src/model.py", tmp_path / "src" / "model.py")
+    shutil.copyfile("src/__init__.py", tmp_path / "src" / "__init__.py")
+
     print("\n" + "=" * 60)
     print("SUBMISSION COMPLETE!")
     print("=" * 60)
