@@ -32,7 +32,7 @@ def parse_args():
     
     # Model arguments
     parser.add_argument(
-        "--vocab_size", type=int, default=1200,
+        "--vocab_size", type=int, default=86,
         help="Vocabulary size"
     )
     parser.add_argument(
@@ -40,7 +40,7 @@ def parse_args():
         help="Embedding dimension"
     )
     parser.add_argument(
-        "--n_layer", type=int, default=4,
+        "--n_layer", type=int, default=6,
         help="Number of transformer layers"
     )
     parser.add_argument(
