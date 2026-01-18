@@ -150,33 +150,33 @@ def main():
     
     # Create model configuration
     print("\nCreating model configuration...")
-    # config = ChessConfig(
-    #     vocab_size=actual_vocab_size,
-    #     n_embd=args.n_embd,
-    #     n_layer=args.n_layer,
-    #     n_head=args.n_head,
-    #     n_ctx=args.n_ctx,
-    #     n_inner=args.n_inner,
-    #     dropout=args.dropout,
-    #     tie_weights=not args.no_tie_weights,
-    #     pad_token_id=tokenizer.pad_token_id,
-    #     bos_token_id=tokenizer.bos_token_id,
-    #     eos_token_id=tokenizer.eos_token_id,
-    # )
-
     config = ChessConfig(
-    vocab_size=actual_vocab_size,
-    n_embd=96,                 # was 128
-    n_layer=6,                 # was 6
-    n_head=4,                  # keep (96 % 4 == 0)
-    n_ctx=192,                 # shorter context => faster
-    n_inner=192,               # 2 * n_embd (smaller MLP)
-    dropout=0.1,
-    tie_weights=not args.no_tie_weights,
-    pad_token_id=tokenizer.pad_token_id,
-    bos_token_id=tokenizer.bos_token_id,
-    eos_token_id=tokenizer.eos_token_id,
-)
+        vocab_size=actual_vocab_size,
+        n_embd=args.n_embd,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_ctx=args.n_ctx,
+        n_inner=args.n_inner,
+        dropout=args.dropout,
+        tie_weights=not args.no_tie_weights,
+        pad_token_id=tokenizer.pad_token_id,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+    )
+
+#     config = ChessConfig(
+#     vocab_size=actual_vocab_size,
+#     n_embd=96,                 # was 128
+#     n_layer=6,                 # was 6
+#     n_head=4,                  # keep (96 % 4 == 0)
+#     n_ctx=192,                 # shorter context => faster
+#     n_inner=192,               # 2 * n_embd (smaller MLP)
+#     dropout=0.1,
+#     tie_weights=not args.no_tie_weights,
+#     pad_token_id=tokenizer.pad_token_id,
+#     bos_token_id=tokenizer.bos_token_id,
+#     eos_token_id=tokenizer.eos_token_id,
+# )
     
     # Print parameter budget
     print_parameter_budget(config)
