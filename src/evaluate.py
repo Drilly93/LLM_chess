@@ -176,7 +176,8 @@ class ChessEvaluator:
             token_str = self.tokenizer.convert_ids_to_tokens(token_id)
 
             # End of move
-            if token_str == "[MOVE_END]" or token_str == self.tokenizer.eos_token:
+            eos_tok = getattr(self.tokenizer, "eos_token", None)
+            if token_str == "[MOVE_END]" or (eos_tok is not None and token_str == eos_tok):
                 break
 
             generated.append(token_id)
@@ -185,27 +186,27 @@ class ChessEvaluator:
         return generated
 
     def _structured_tokens_to_uci(self, token_strs: List[str]) -> Optional[str]:
-        """
-        Convert structured tokens to UCI move string.
-        Expected minimal pattern:
-        [W]/[B], [PIECE], [from], [to], optional [prom_*], optional flags
-        Returns UCI like "e2e4" or "e7e8q".
-        """
         if len(token_strs) < 4:
             return None
 
-        # Find from/to squares (tokens like "[e2]")
-        squares = [t for t in token_strs if len(t) == 4 and t[0] == "[" and t[3] == "]" and t[1].isalpha() and t[2].isdigit()]
-        # squares should contain at least from and to
+        def is_square(tok: str) -> bool:
+            # token looks like "[e2]"
+            return (
+                len(tok) == 4
+                and tok[0] == "["
+                and tok[3] == "]"
+                and tok[1] in "abcdefgh"
+                and tok[2] in "12345678"
+            )
+
+        squares = [t for t in token_strs if is_square(t)]
         if len(squares) < 2:
             return None
 
         from_sq = squares[0][1:3]
         to_sq = squares[1][1:3]
-
         uci = from_sq + to_sq
 
-        # Promotion
         if "[prom_Q]" in token_strs:
             uci += "q"
         elif "[prom_R]" in token_strs:
@@ -219,30 +220,37 @@ class ChessEvaluator:
 
 
     def _get_model_move(
-    self,
-    board,
-    temperature: float = 0.7,
-    top_k: int = 10,) -> Tuple[Optional[str], int]:
+        self,
+        board,
+        temperature: float = 0.7,
+        top_k: int = 10,
+    ) -> Tuple[Optional[str], int]:
         """
         Get the model's next move prediction for the structured tokenizer.
         Generates tokens until [MOVE_END], converts them to UCI, and checks legality.
         """
         self.model.eval()
 
-        # Convert board history to the dataset move-string format
         moves_str = self._convert_board_to_moves(board)
 
-        # Tokenize the history (let tokenizer handle special tokens)
+        # Tokenize history
         inputs = self.tokenizer(
             moves_str,
             add_special_tokens=True,
             return_tensors="pt",
             truncation=True,
-            max_length=self.model.config.n_ctx - 32,  # leave room for one generated move
-        ).to(self.device)
+            max_length=self.model.config.n_ctx - 32,
+        )
+
+        # ✅ CRITICAL: some custom tokenizers may return empty input at game start
+        if inputs["input_ids"].numel() == 0:
+            bos_id = self.tokenizer.bos_token_id
+            inputs["input_ids"] = torch.tensor([[bos_id]], dtype=torch.long)
+            inputs["attention_mask"] = torch.tensor([[1]], dtype=torch.long)
+
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
         for retry in range(self.max_retries):
-            # Generate one move as structured token ids
             gen_ids = self._generate_move_token_ids(
                 inputs["input_ids"],
                 temperature=temperature,
@@ -255,12 +263,10 @@ class ChessEvaluator:
 
             token_strs = [self.tokenizer.convert_ids_to_tokens(i) for i in gen_ids]
 
-            # Convert to UCI
             uci_move = self._structured_tokens_to_uci(token_strs)
             if uci_move is None:
                 continue
 
-            # Validate legality
             try:
                 move = self.chess.Move.from_uci(uci_move)
                 if move in board.legal_moves:
