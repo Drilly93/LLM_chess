@@ -52,7 +52,7 @@ class ChessConfig(PretrainedConfig):
     
     def __init__(
         self,
-        vocab_size: int = 1200,
+        vocab_size: int = 86,
         n_embd: int = 128,
         n_layer: int = 6,
         n_head: int = 4,

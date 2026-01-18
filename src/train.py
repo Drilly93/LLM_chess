@@ -167,7 +167,7 @@ def main():
     config = ChessConfig(
     vocab_size=actual_vocab_size,
     n_embd=96,                 # was 128
-    n_layer=2,                 # was 6
+    n_layer=6,                 # was 6
     n_head=4,                  # keep (96 % 4 == 0)
     n_ctx=192,                 # shorter context => faster
     n_inner=192,               # 2 * n_embd (smaller MLP)
