@@ -132,163 +132,142 @@ class ChessEvaluator:
         return " ".join(moves)
     
     def _is_separator_token(self, token_str: str) -> bool:
-        """
-        Check if a token represents a separator (whitespace, EOS, etc.).
-        
-        This allows the evaluator to work with different tokenization strategies:
-        - Move-level tokenizers: each move is one token, no separators generated
-        - Character-level tokenizers: space character marks end of move
-        - BPE/subword tokenizers: may generate partial moves
-        
-        Args:
-            token_str: The decoded token string.
-        
-        Returns:
-            True if this token indicates end of a move.
-        """
-        # Check for EOS token
-        if hasattr(self.tokenizer, 'eos_token') and token_str == self.tokenizer.eos_token:
+        # New structured tokenizer
+        if token_str == "[MOVE_END]":
             return True
-        
-        # Check for whitespace (space, newline, etc.)
+
+        # EOS token
+        if hasattr(self.tokenizer, "eos_token") and token_str == self.tokenizer.eos_token:
+            return True
+
+        # (keep whitespace fallback for other tokenizers)
         if token_str.strip() == "" and len(token_str) > 0:
             return True
-        
-        # Check if the token ends with whitespace (some tokenizers include trailing space)
         if token_str != token_str.rstrip():
             return True
-        
+
         return False
 
-    def _generate_move_tokens(
+    def _generate_move_token_ids(
         self,
         input_ids: torch.Tensor,
         temperature: float = 0.7,
         top_k: int = 10,
-        max_tokens: int = 20,
-    ) -> str:
-        """
-        Generate tokens until a separator (whitespace/EOS) is encountered.
-        
-        This method supports different tokenization strategies:
-        - For move-level tokenizers: generates one token (the full move)
-        - For character/subword tokenizers: generates until whitespace
-        
-        Args:
-            input_ids: The input token IDs.
-            temperature: Sampling temperature.
-            top_k: Top-k filtering parameter.
-            max_tokens: Maximum tokens to generate for a single move.
-        
-        Returns:
-            The generated move string (without trailing separator).
-        """
-        generated_tokens = []
+        max_tokens: int = 32,
+    ) -> List[int]:
+        """Generate token ids until [MOVE_END] (or EOS). Returns ids excluding the separator."""
+        generated: List[int] = []
         current_ids = input_ids.clone()
-        
+
         for _ in range(max_tokens):
             with torch.no_grad():
                 outputs = self.model(input_ids=current_ids)
                 logits = outputs.logits[:, -1, :] / temperature
-                
-                # Apply top-k filtering
+
                 if top_k > 0:
                     top_k_values = torch.topk(logits, min(top_k, logits.size(-1)))[0]
                     indices_to_remove = logits < top_k_values[..., -1, None]
                     logits[indices_to_remove] = float("-inf")
-                
-                # Sample
+
                 probs = torch.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)  # Shape: [1, 1]
-            
-            # Decode the token
-            token_str = self.tokenizer.decode(next_token[0])
-            
-            # Check if this is a separator token
-            if self._is_separator_token(token_str):
+                next_token = torch.multinomial(probs, num_samples=1)  # [1,1]
+
+            token_id = int(next_token.item())
+            token_str = self.tokenizer.convert_ids_to_tokens(token_id)
+
+            # End of move
+            if token_str == "[MOVE_END]" or token_str == self.tokenizer.eos_token:
                 break
-            
-            generated_tokens.append(next_token[0])  # Store [1] tensor
-            
-            # Append to input for next iteration (next_token is already [1, 1])
+
+            generated.append(token_id)
             current_ids = torch.cat([current_ids, next_token], dim=-1)
-            
-            # For move-level tokenizers, a single non-separator token is the full move
-            # We can detect this by checking if the token looks like a complete move
-            # (starts with W or B, has enough characters for a move)
-            if len(token_str) >= 6 and token_str[0] in "WB":
-                break
-        
-        # Decode all generated tokens together
-        if generated_tokens:
-            all_tokens = torch.cat(generated_tokens, dim=0)
-            move_str = self.tokenizer.decode(all_tokens, skip_special_tokens=True)
-            return move_str.strip()
-        
-        return ""
+
+        return generated
+
+    def _structured_tokens_to_uci(self, token_strs: List[str]) -> Optional[str]:
+        """
+        Convert structured tokens to UCI move string.
+        Expected minimal pattern:
+        [W]/[B], [PIECE], [from], [to], optional [prom_*], optional flags
+        Returns UCI like "e2e4" or "e7e8q".
+        """
+        if len(token_strs) < 4:
+            return None
+
+        # Find from/to squares (tokens like "[e2]")
+        squares = [t for t in token_strs if len(t) == 4 and t[0] == "[" and t[3] == "]" and t[1].isalpha() and t[2].isdigit()]
+        # squares should contain at least from and to
+        if len(squares) < 2:
+            return None
+
+        from_sq = squares[0][1:3]
+        to_sq = squares[1][1:3]
+
+        uci = from_sq + to_sq
+
+        # Promotion
+        if "[prom_Q]" in token_strs:
+            uci += "q"
+        elif "[prom_R]" in token_strs:
+            uci += "r"
+        elif "[prom_B]" in token_strs:
+            uci += "b"
+        elif "[prom_N]" in token_strs:
+            uci += "n"
+
+        return uci
+
 
     def _get_model_move(
-        self,
-        board,
-        temperature: float = 0.7,
-        top_k: int = 10,
-    ) -> Tuple[Optional[str], int]:
+    self,
+    board,
+    temperature: float = 0.7,
+    top_k: int = 10,) -> Tuple[Optional[str], int]:
         """
-        Get the model's next move prediction.
-        
-        This method generates tokens until a separator (whitespace/EOS) is produced,
-        allowing it to work with different tokenization strategies:
-        - Move-level tokenizers: each move is a single token
-        - Character-level tokenizers: moves are generated character by character
-        - BPE/subword tokenizers: moves may be split into subwords
-        
-        Returns:
-            Tuple of (UCI move string, number of retries used).
+        Get the model's next move prediction for the structured tokenizer.
+        Generates tokens until [MOVE_END], converts them to UCI, and checks legality.
         """
         self.model.eval()
-        
-        # Convert board to input format
+
+        # Convert board history to the dataset move-string format
         moves_str = self._convert_board_to_moves(board)
-        
-        # Add BOS token if no moves yet
-        if not moves_str:
-            input_text = self.tokenizer.bos_token
-        else:
-            input_text = self.tokenizer.bos_token + " " + moves_str
-        
-        # Tokenize
+
+        # Tokenize the history (let tokenizer handle special tokens)
         inputs = self.tokenizer(
-            input_text,
+            moves_str,
+            add_special_tokens=True,
             return_tensors="pt",
             truncation=True,
-            max_length=self.model.config.n_ctx - 10,  # Leave room for generated tokens
+            max_length=self.model.config.n_ctx - 32,  # leave room for one generated move
         ).to(self.device)
-        
-        # Try to generate a legal move
+
         for retry in range(self.max_retries):
-            # Generate tokens until separator
-            move_token = self._generate_move_tokens(
+            # Generate one move as structured token ids
+            gen_ids = self._generate_move_token_ids(
                 inputs["input_ids"],
                 temperature=temperature,
                 top_k=top_k,
+                max_tokens=32,
             )
-            
+
+            if not gen_ids:
+                continue
+
+            token_strs = [self.tokenizer.convert_ids_to_tokens(i) for i in gen_ids]
+
             # Convert to UCI
-            if len(move_token) >= 6:
-                uci_move = move_token[2:4] + move_token[4:6]
-                
-                # Handle promotion
-                if "=" in move_token:
-                    promo_idx = move_token.index("=")
-                    uci_move += move_token[promo_idx + 1].lower()
-                
-                try:
-                    move = self.chess.Move.from_uci(uci_move)
-                    if move in board.legal_moves:
-                        return uci_move, retry
-                except (ValueError, self.chess.InvalidMoveError):
-                    pass
-        
+            uci_move = self._structured_tokens_to_uci(token_strs)
+            if uci_move is None:
+                continue
+
+            # Validate legality
+            try:
+                move = self.chess.Move.from_uci(uci_move)
+                if move in board.legal_moves:
+                    return uci_move, retry
+            except (ValueError, self.chess.InvalidMoveError):
+                pass
+
         return None, self.max_retries
     
     def _get_stockfish_move(self, board, time_limit: float = 0.1) -> str:
@@ -570,7 +549,7 @@ def load_model_from_hub(model_id: str, device: str = "auto"):
     
     # Import to register custom classes
     from src.model import ChessConfig, ChessForCausalLM
-    from src.tokenizer import ChessTokenizer
+    from src.tokenizer import ChessTokenizer    
     
 
     # tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
